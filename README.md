@@ -27,3 +27,11 @@
 - 替换 `data.py` 为实时数据源（地图/票务 API）。
 - 增加 LLM 提示词与工具路由，将 `TravelPlanner` 拓展为多阶段 Agent（Planner → Verifier → Refiner）。
 - 引入更多指标（人流、评分、儿童友好度）并改进路线优化策略。
+
+## CI 工作流使用说明
+
+仓库已包含 `.github/workflows/run-demo.yml`，会在每次 push 时自动运行 `python examples/demo.py`：
+
+1. 将代码 push 到 GitHub 仓库的任意分支，GitHub Actions 会自动触发 "Run demo" 工作流。
+2. 在仓库的 **Actions** 标签页可以查看运行记录和日志输出。
+3. 如果仓库禁用了 Actions，可在 **Settings → Actions** 中开启以便工作流正常执行。

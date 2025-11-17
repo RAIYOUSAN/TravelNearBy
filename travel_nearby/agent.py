@@ -37,17 +37,13 @@ class TravelPlanner:
         )
 
         pois = filter_pois(preference)
-        ordered = build_route(preference, pois)
+        ordered_pois = build_route(preference, pois)
         days: List[ItineraryDay] = []
-        leftovers = list(ordered)
+        leftovers = list(ordered_pois)
         current_date = datetime.today()
 
         for idx in range(preference.days):
-            scheduled, remaining_pois = schedule_day(
-                start_time=preference.start_time,
-                ordered_pois=leftovers,
-                latest_end=preference.end_time,
-            )
+            scheduled, remaining_pois = schedule_day(preference, leftovers, latest_end=preference.end_time)
             stops = [
                 ItineraryStop(
                     poi=poi,
@@ -60,11 +56,14 @@ class TravelPlanner:
             ]
             days.append(
                 ItineraryDay(
-                    label=(current_date + timedelta(days=idx)).strftime("Day %d"),
+                    label=f"Day {idx + 1}",
                     stops=stops,
                 )
             )
-            leftovers = [(poi, 0) for poi in remaining_pois]
+            leftovers = list(remaining_pois)
+
+            if not leftovers:
+                break
 
         itinerary = Itinerary(preference=preference, days=days)
         validation = validate_itinerary(

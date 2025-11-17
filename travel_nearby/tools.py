@@ -49,61 +49,94 @@ def filter_pois(preference: UserPreference) -> List[POI]:
     return matches
 
 
+def _mode_speed_kmh(mode: TravelMode) -> float:
+    return {"walking": 4.5, "transit": 20, "driving": 40}.get(mode, 30)
+
+
 def travel_minutes_between(p1: POI, p2: POI, mode: TravelMode) -> int:
     """Estimate travel minutes between two POIs using simple speed defaults."""
 
-    speed_map = {"walking": 4.5, "transit": 20, "driving": 40}
-    speed = speed_map.get(mode, 30)  # km/h
+    speed = _mode_speed_kmh(mode)
     distance = haversine_distance(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
     hours = distance / speed
     return max(10, int(hours * 60))
 
 
-def build_route(preference: UserPreference, pois: Sequence[POI]) -> List[Tuple[POI, int]]:
+def travel_minutes_from_coords(lat: float, lon: float, poi: POI, mode: TravelMode) -> int:
+    """Estimate travel minutes between coordinates and a POI."""
+
+    speed = _mode_speed_kmh(mode)
+    distance = haversine_distance(lat, lon, poi.latitude, poi.longitude)
+    hours = distance / speed
+    return max(10, int(hours * 60))
+
+
+def build_route(preference: UserPreference, pois: Sequence[POI]) -> List[POI]:
     """Greedy route ordering by nearest neighbor starting from city center."""
 
     if not pois:
         return []
 
-    # Seed with the closest POI to the city center to avoid skewed starting points
     center_lat, center_lon = city_center(preference.city)
     sorted_pois = sorted(pois, key=lambda poi: haversine_distance(center_lat, center_lon, poi.latitude, poi.longitude))
-    ordered: List[Tuple[POI, int]] = []
+    ordered: List[POI] = []
     remaining = list(sorted_pois)
+    # Start from the closest POI to the city center
     current = remaining.pop(0)
-    ordered.append((current, 0))
+    ordered.append(current)
 
     while remaining:
         next_poi = min(remaining, key=lambda p: travel_minutes_between(current, p, preference.travel_mode))
-        travel_minutes = travel_minutes_between(current, next_poi, preference.travel_mode)
-        ordered.append((next_poi, travel_minutes))
+        ordered.append(next_poi)
         current = next_poi
         remaining.remove(next_poi)
     return ordered
 
 
-def schedule_day(start_time: time, ordered_pois: Sequence[Tuple[POI, int]], latest_end: time) -> Tuple[List[Tuple[POI, time, time, int]], List[POI]]:
-    """Create a day schedule returning accepted POIs and leftovers."""
+def schedule_day(
+    preference: UserPreference, ordered_pois: Sequence[POI], latest_end: time
+) -> Tuple[List[Tuple[POI, time, time, int]], List[POI]]:
+    """Create a day schedule returning accepted POIs and leftovers.
+
+    Travel time to the first stop is calculated from the city center to make each day
+    independently feasible, while subsequent stops use the previous POI as origin.
+    """
 
     accepted: List[Tuple[POI, time, time, int]] = []
     remaining: List[POI] = []
-    current_time = datetime.combine(datetime.today(), start_time)
+    current_time = datetime.combine(datetime.today(), preference.start_time)
+    origin_lat, origin_lon = city_center(preference.city)
+    last_poi: POI | None = None
 
-    for poi, travel_minutes in ordered_pois:
+    for poi in ordered_pois:
+        if last_poi:
+            travel_minutes = travel_minutes_between(last_poi, poi, preference.travel_mode)
+        else:
+            travel_minutes = travel_minutes_from_coords(origin_lat, origin_lon, poi, preference.travel_mode)
+
         arrival = current_time + timedelta(minutes=travel_minutes)
         stay_duration = timedelta(minutes=poi.typical_duration_minutes)
         departure = arrival + stay_duration
+
         if departure.time() > latest_end:
-            remaining.append(poi)
-            continue
+            remaining.extend(ordered_pois[ordered_pois.index(poi) :])
+            break
+
         accepted.append((poi, arrival.time(), departure.time(), travel_minutes))
         current_time = departure
+        last_poi = poi
+
     return accepted, remaining
 
 
 def validate_itinerary(stops: Iterable[Tuple[POI, time, time, int]], preference: UserPreference) -> ValidationReport:
     issues: List[ValidationIssue] = []
     stops_list = list(stops)
+
+    if not stops_list:
+        return ValidationReport(
+            issues=[ValidationIssue(message="未找到符合条件的景点，无法生成行程", level="error", hint="放宽主题、半径或增加城市数据")]
+        )
 
     for poi, arrival, departure, travel_minutes in stops_list:
         if arrival < poi.open_time or departure > poi.close_time:
